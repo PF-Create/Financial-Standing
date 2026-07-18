@@ -1252,7 +1252,7 @@ footer.disclaimer{border-top:1px solid var(--line);padding:16px 26px 26px;text-a
           <div class="dist-bar-track"><div class="dist-bar-fill" style="width:${pct}%;background:${p.color};"></div></div>
         </div>`;
       }).join("")}
-      <div class="st-sub" style="margin-top:2px;">${disposable<0 ? "Your committed SIPs exceed this month's savings." : "Disposable = savings (income − expenses) − committed SIP amount"}</div>
+      <div class="st-sub" style="margin-top:2px;">${disposable<0 ? "Your committed SIPs exceed this month's savings." : `What is disposable income? <a class="ch-link" onclick="PF.go('learning')" style="cursor:pointer;">Learn more →</a>`}</div>
     </div>`;
   }
 
@@ -1450,7 +1450,7 @@ footer.disclaimer{border-top:1px solid var(--line);padding:16px 26px 26px;text-a
       <div class="card-head"><h3>Trends</h3></div>
       ${row("Savings Ratio", savingsRatio, prevSavingsRatio, true)}
       ${row("Expense Ratio", expenseRatio, prevExpenseRatio, false)}
-      ${row("Investment Portfolio", investRatio, prevInvestRatio, true)}
+      ${row("Investment Profit", investRatio, prevInvestRatio, true)}
     </div>`;
   }
 
@@ -2154,6 +2154,11 @@ footer.disclaimer{border-top:1px solid var(--line);padding:16px 26px 26px;text-a
     {id:"savingshabits", cat:"Saving", title:"Building a Savings Habit", body:`
       <p><b>Pay yourself first:</b> Move money to savings the moment income arrives, before it can be spent.</p>
       <p><b>Automate it:</b> Standing instructions remove the need for willpower every month.</p>`},
+    {id:"disposable", cat:"Saving", title:"Understanding Disposable Income", body:`
+      <p><b>What it is:</b> Disposable income is what's left from this month's savings after your committed investments (like SIPs) are set aside — money that's genuinely free to spend, save further, or invest as new opportunities arise.</p>
+      <p><b>How it's calculated:</b> Disposable = Savings (Income − Expenses) − Committed Monthly Investments (the SIP amounts tracked in Recurring Payments).</p>
+      <p><b>Why it matters:</b> A shrinking or negative disposable income means your investment commitments are outpacing what you're actually saving each month — a signal to revisit your SIP amounts or trim expenses before it becomes a cash-flow problem.</p>
+      <div class="dyk">💡 Tracking disposable income month to month helps you catch over-commitment early, before it forces you to dip into savings.</div>`},
     {id:"invest", cat:"Investing", title:"Investment Basics", body:`
       <table><thead><tr><th>Type</th><th>Risk</th><th>Liquidity</th><th>Best for</th></tr></thead><tbody>
         <tr><td>Fixed Deposit</td><td>Low</td><td>Low–Moderate</td><td>Capital safety</td></tr>
