@@ -971,19 +971,23 @@ footer.disclaimer{border-top:1px solid var(--line);padding:16px 26px 26px;text-a
   function totalCurrentValue(){ return data.investments.reduce((s,i)=>s+Number(i.currentValue||i.amount||0),0); }
   function totalDebt(){ return data.debts.reduce((s,d)=>s+Number(d.amount||0),0); }
   // --- monthly-flow helpers (additive; used for ratios that should reflect "this month" rather than all-time totals) ---
-  function monthlyInvestedAmount(){
-    return data.investments.filter(i=>(i.date||"").slice(0,7)===curMonth()).reduce((s,i)=>s+Number(i.amount||0),0);
-  }
-  function monthlySavingsAdded(){
-    return data.savings.filter(s=>(s.date||"").slice(0,7)===curMonth()).reduce((s,x)=>s+Number(x.amount||0),0);
-  }
-  function monthlyPremiumAmount(amount, freq){
+  function normalizeToMonthly(amount, freq){
     amount = Number(amount)||0;
     if(freq==="yearly") return amount/12;
     if(freq==="half-yearly") return amount/6;
     if(freq==="quarterly") return amount/3;
-    return amount; // monthly
+    return amount; // monthly (or unspecified)
   }
+  // Committed monthly investment amount = the SIPs tracked in Recurring Payments,
+  // normalized to a monthly figure — this is the "committed" amount, distinct from
+  // one-off investment entries or cumulative invested totals.
+  function committedMonthlyInvestment(){
+    return (data.recurringPayments||[]).filter(p=>p.type==="SIP").reduce((s,p)=>s+normalizeToMonthly(p.amount,p.frequency),0);
+  }
+  function monthlySavingsAdded(){
+    return data.savings.filter(s=>(s.date||"").slice(0,7)===curMonth()).reduce((s,x)=>s+Number(x.amount||0),0);
+  }
+  function monthlyPremiumAmount(amount, freq){ return normalizeToMonthly(amount, freq); }
   function totalMonthlyPremiums(){
     return data.insurance.reduce((s,p)=>s+monthlyPremiumAmount(p.premium,p.frequency),0);
   }
@@ -994,6 +998,7 @@ footer.disclaimer{border-top:1px solid var(--line);padding:16px 26px 26px;text-a
     const month = curMonth();
     const snap = {month, income: Math.round(totalIncome()), expenses: Math.round(totalExpenses()),
       savingsBalanceTotal: Math.round(totalSavingsBalance()+ (data.emergencyFund.current||0)),
+      savingsAddedThisMonth: Math.round(monthlySavingsAdded()),
       investments: Math.round(totalCurrentValue()), investedAmount: Math.round(totalInvestedAmount()), debt: Math.round(totalDebt()),
       score: computeScore().overall};
     const existing = data.history.find(h=>h.month===month);
@@ -1224,19 +1229,15 @@ footer.disclaimer{border-top:1px solid var(--line);padding:16px 26px 26px;text-a
 
   // 📊 Financial Distribution — Savings / Investments / Insurance coverage, side by side.
   // Purely additive: reads existing data, degrades gracefully to 0 when a category is empty.
-  // 📊 Savings Distribution — how this month's income is being managed: what went into
-  // investments, what went into savings, and what's left disposable after every committed
-  // outflow (expenses, savings, investments, debt EMIs, insurance premiums).
+  // 📊 Savings Distribution — Invested is the monthly-committed SIP amount from Recurring
+  // Payments (not one-off entries or cumulative totals). Disposable is what's left of this
+  // month's savings (income − expenses) after that committed investment amount.
   function savingsDistributionCard(){
-    const inc = totalIncome();
-    const invested = monthlyInvestedAmount();
-    const saved = monthlySavingsAdded();
-    const emi = totalMonthlyEMI();
-    const premiums = totalMonthlyPremiums();
-    const disposable = inc - totalExpenses() - saved - invested - emi - premiums;
+    const savings = netSavings();
+    const committed = committedMonthlyInvestment();
+    const disposable = savings - committed;
     const parts = [
-      {label:"Invested", value:invested, color:"var(--purple)"},
-      {label:"Saved", value:saved, color:"var(--green)"},
+      {label:"Invested (committed SIPs)", value:committed, color:"var(--purple)"},
       {label:"Disposable", value:disposable, color: disposable<0 ? "var(--coral)" : "var(--amber)"},
     ];
     const posTotal = parts.reduce((s,p)=>s+Math.max(0,p.value),0) || 1;
@@ -1251,7 +1252,7 @@ footer.disclaimer{border-top:1px solid var(--line);padding:16px 26px 26px;text-a
           <div class="dist-bar-track"><div class="dist-bar-fill" style="width:${pct}%;background:${p.color};"></div></div>
         </div>`;
       }).join("")}
-      <div class="st-sub" style="margin-top:2px;">${disposable<0 ? "You're overcommitted this month — outflows exceed income." : "Disposable = income − expenses − saved − invested − EMIs − premiums"}</div>
+      <div class="st-sub" style="margin-top:2px;">${disposable<0 ? "Your committed SIPs exceed this month's savings." : "Disposable = savings (income − expenses) − committed SIP amount"}</div>
     </div>`;
   }
 
@@ -1414,15 +1415,17 @@ footer.disclaimer{border-top:1px solid var(--line);padding:16px 26px 26px;text-a
     const inc = totalIncome()||1;
     const prev = prevSnapshot();
     const prevInc = prev ? (prev.income||1) : null;
-    const savingsRatio = Math.round((totalSavingsBalance()/inc)*100);
-    const investRatio = Math.round((monthlyInvestedAmount()/inc)*100);
+    const investedTotal = totalInvestedAmount();
+    const profit = totalCurrentValue()-investedTotal;
+    // Savings Ratio = (Income - Expenses) / Income — the standard savings rate, so it and
+    // Expense Ratio always complement each other to 100% of income.
+    const savingsRatio = Math.round((netSavings()/inc)*100);
+    const investRatio = investedTotal>0 ? Math.round((profit/investedTotal)*100) : 0;
     const expenseRatio = Math.round((totalExpenses()/inc)*100);
-    // Savings Ratio here is "amount recorded in Savings tab ÷ income" — approximated month over month
-    // using the historical savings+emergency-fund snapshot (closest tracked figure).
-    const prevSavingsRatio = prev && prev.savingsBalanceTotal!=null ? Math.round((prev.savingsBalanceTotal/prevInc)*100) : null;
-    // Investment Ratio is based on THIS month's fresh contributions, which aren't tracked
-    // historically per month yet, so there's no reliable prior-month figure to compare against.
-    const prevInvestRatio = null;
+    const prevSavingsRatio = prev ? Math.round(((prev.income-prev.expenses)/prevInc)*100) : null;
+    const prevInvested = prev && prev.investedAmount!=null ? prev.investedAmount : null;
+    const prevProfit = prev && prevInvested!=null ? (prev.investments-prevInvested) : null;
+    const prevInvestRatio = (prevInvested && prevInvested>0) ? Math.round((prevProfit/prevInvested)*100) : null;
     const prevExpenseRatio = prev ? Math.round((prev.expenses/prevInc)*100) : null;
 
     function row(label, val, prevVal, goodWhenUp){
@@ -1446,8 +1449,8 @@ footer.disclaimer{border-top:1px solid var(--line);padding:16px 26px 26px;text-a
     return `<div class="card">
       <div class="card-head"><h3>Trends</h3></div>
       ${row("Savings Ratio", savingsRatio, prevSavingsRatio, true)}
-      ${row("Investment Ratio", investRatio, prevInvestRatio, true)}
       ${row("Expense Ratio", expenseRatio, prevExpenseRatio, false)}
+      ${row("Investment Portfolio", investRatio, prevInvestRatio, true)}
     </div>`;
   }
 
