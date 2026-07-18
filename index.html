@@ -1237,8 +1237,8 @@ footer.disclaimer{border-top:1px solid var(--line);padding:16px 26px 26px;text-a
     const committed = committedMonthlyInvestment();
     const disposable = savings - committed;
     const parts = [
-      {label:"Invested (committed SIPs)", value:committed, color:"var(--purple)"},
-      {label:"Disposable", value:disposable, color: disposable<0 ? "var(--coral)" : "var(--amber)"},
+      {label:"Committed Savings (Recurring SIPs)", value:committed, color:"var(--purple)"},
+      {label:"Disposable (Total Savings - Committed)", value:disposable, color: disposable<0 ? "var(--coral)" : "var(--amber)"},
     ];
     const posTotal = parts.reduce((s,p)=>s+Math.max(0,p.value),0) || 1;
     return `<div class="card">
