@@ -189,7 +189,13 @@ main{flex:1;padding:22px 26px 60px;}
 .page-head .ph-sub{font-size:13px;color:var(--ink-soft);margin-top:2px;}
 .page-actions{display:flex;gap:8px;flex-wrap:wrap;}
 
-.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px 20px;}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px 20px;transition:box-shadow .2s ease, transform .2s ease;}
+.card:hover{box-shadow:0 6px 18px rgba(0,0,0,.08);transform:translateY(-1px);}
+.dist-bar-track{height:9px;border-radius:99px;background:var(--line);overflow:hidden;}
+.dist-bar-fill{height:100%;border-radius:99px;transition:width .6s cubic-bezier(.22,1,.36,1);}
+.insights-list{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:9px;}
+.insights-list li{font-size:12.5px;color:var(--ink-soft);line-height:1.5;padding-left:16px;position:relative;}
+.insights-list li::before{content:"•";position:absolute;left:0;color:var(--green);font-weight:800;}
 .card-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
 .card-head h3{font-size:14.5px;display:flex;align-items:center;gap:7px;}
 .card-head .ch-link{font-size:12px;color:var(--green-dark);font-weight:700;}
@@ -971,7 +977,7 @@ footer.disclaimer{border-top:1px solid var(--line);padding:16px 26px 26px;text-a
     const month = curMonth();
     const snap = {month, income: Math.round(totalIncome()), expenses: Math.round(totalExpenses()),
       savingsBalanceTotal: Math.round(totalSavingsBalance()+ (data.emergencyFund.current||0)),
-      investments: Math.round(totalCurrentValue()), debt: Math.round(totalDebt()),
+      investments: Math.round(totalCurrentValue()), investedAmount: Math.round(totalInvestedAmount()), debt: Math.round(totalDebt()),
       score: computeScore().overall};
     const existing = data.history.find(h=>h.month===month);
     if(existing) Object.assign(existing, snap); else data.history.push(snap);
@@ -1038,6 +1044,24 @@ footer.disclaimer{border-top:1px solid var(--line);padding:16px 26px 26px;text-a
       const wantPct = Math.round((totalWants()/exp)*100);
       if(wantPct>40) insights.push(`Wants make up ${wantPct}% of spending — trimming toward 30% would help.`);
     }
+    // insurance coverage check
+    const hasLife = data.insurance.some(p=>p.type==="life");
+    const hasHealth = data.insurance.some(p=>p.type==="health");
+    if(!hasLife && !hasHealth) insights.push("You don't have any insurance coverage yet — consider adding health or life insurance.");
+    else if(!hasLife || !hasHealth) insights.push(`Your insurance coverage is partial — you're missing ${!hasLife?"life":"health"} insurance.`);
+    // investment allocation check
+    const investedAmt = totalInvestedAmount();
+    if(investedAmt<=0){
+      insights.push("You haven't started investing yet — even small, regular investments compound over time.");
+    } else if(inc>0 && investedAmt>=inc*6){
+      insights.push("Good investment allocation — you're on track relative to your income. 📈");
+    }
+    // debt burden check
+    const emi = totalMonthlyEMI();
+    if(inc>0 && emi>0){
+      const emiPct = Math.round((emi/inc)*100);
+      if(emiPct>40) insights.push(`Your EMI payments take up ${emiPct}% of income — that's on the high side.`);
+    }
     return insights;
   }
   function getEncouragement(score){
@@ -1077,14 +1101,23 @@ footer.disclaimer{border-top:1px solid var(--line);padding:16px 26px 26px;text-a
   }
 
   /* ================= CHART HELPERS ================= */
-  function svgGauge(pct, size, strokeWidth, color){
+  function svgGauge(pct, size, strokeWidth, color, animateId){
     size = size||110; strokeWidth = strokeWidth||10; color = color||"var(--green)";
     const r = (size-strokeWidth)/2, c = 2*Math.PI*r, dash = clamp(pct,0,100)/100*c;
+    const idAttr = animateId ? ` id="${animateId}" data-dash="${dash}" data-c="${c}"` : "";
+    const initialDash = animateId ? `0 ${c}` : `${dash} ${c}`;
     return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
       <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="var(--line)" stroke-width="${strokeWidth}"/>
-      <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="${color}" stroke-width="${strokeWidth}" stroke-linecap="round"
-        stroke-dasharray="${dash} ${c}" transform="rotate(-90 ${size/2} ${size/2})" style="transition:stroke-dasharray .5s ease;"/>
+      <circle${idAttr} cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="${color}" stroke-width="${strokeWidth}" stroke-linecap="round"
+        stroke-dasharray="${initialDash}" transform="rotate(-90 ${size/2} ${size/2})" style="transition:stroke-dasharray .8s cubic-bezier(.22,1,.36,1);"/>
     </svg>`;
+  }
+  function animateGaugeIn(id){
+    const el = document.getElementById(id);
+    if(!el) return;
+    const dash = el.getAttribute("data-dash"), c = el.getAttribute("data-c");
+    const raf = typeof requestAnimationFrame==="function" ? requestAnimationFrame : (fn)=>setTimeout(fn,16);
+    raf(()=>{ raf(()=>{ el.setAttribute("stroke-dasharray", `${dash} ${c}`); }); });
   }
   function donut(slices, size){
     // slices: [{value, color}]
@@ -1143,6 +1176,11 @@ footer.disclaimer{border-top:1px solid var(--line);padding:16px 26px 26px;text-a
         <button class="btn btn-outline" style="margin-top:10px;" onclick="PF.go('reports')">View Details</button>
       </div>
 
+      <div class="grid cols-2" style="margin-bottom:8px;">
+        ${financialDistributionCard()}
+        ${insightsCard()}
+      </div>
+
       <div class="section-toggle" id="dashDetailsToggle" onclick="PF.toggleDashSection('dashDetails')">
         <span>Financial Details <span class="stg-hint">Emergency fund, investments &amp; debt</span></span>
         <span class="stg-chev">▾</span>
@@ -1164,6 +1202,43 @@ footer.disclaimer{border-top:1px solid var(--line);padding:16px 26px 26px;text-a
     `;
     updateScoreCard(score);
     if(dashSectionState.dashDetails){ document.getElementById("dashDetails").classList.add("open"); document.getElementById("dashDetailsToggle").classList.add("open"); }
+    animateGaugeIn("scoreGaugeCircle");
+  }
+
+  // 📊 Financial Distribution — Savings / Investments / Insurance coverage, side by side.
+  // Purely additive: reads existing data, degrades gracefully to 0 when a category is empty.
+  function financialDistributionCard(){
+    const savings = totalSavingsBalance();
+    const investments = totalCurrentValue();
+    const insuranceCoverage = (data.insurance||[]).reduce((s,p)=>s+Number(p.coverage||0),0);
+    const parts = [
+      {label:"Savings", value:savings, color:"var(--green)"},
+      {label:"Investments", value:investments, color:"var(--purple)"},
+      {label:"Insurance Coverage", value:insuranceCoverage, color:"var(--coral)"},
+    ];
+    const total = parts.reduce((s,p)=>s+p.value,0) || 1;
+    return `<div class="card">
+      <div class="card-head"><h3>📊 Financial Distribution</h3></div>
+      ${parts.map(p=>{
+        const pct = Math.round((p.value/total)*100);
+        return `<div style="margin-bottom:11px;">
+          <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--ink-soft);margin-bottom:4px;">
+            <span>${p.label}</span><b class="num" style="color:var(--ink);">${fmt(p.value)}</b>
+          </div>
+          <div class="dist-bar-track"><div class="dist-bar-fill" style="width:${pct}%;background:${p.color};"></div></div>
+        </div>`;
+      }).join("")}
+      <div class="st-sub" style="margin-top:2px;">Share of your combined savings, investments &amp; insurance coverage</div>
+    </div>`;
+  }
+
+  // 🧠 Insights — small rule-based card, additive to the existing Smart Comment card above.
+  function insightsCard(){
+    const lines = getInsights();
+    return `<div class="card">
+      <div class="card-head"><h3>🧠 Insights</h3></div>
+      ${lines.length ? `<ul class="insights-list">${lines.map(l=>`<li>${l}</li>`).join("")}</ul>` : `<div class="empty" style="padding:6px 0;">Add income and expenses to unlock insights.</div>`}
+    </div>`;
   }
 
   // dashboard UI state (collapsed by default so the page isn't overwhelming on load)
@@ -1199,11 +1274,12 @@ footer.disclaimer{border-top:1px solid var(--line);padding:16px 26px 26px;text-a
   function scoreCardCompact(score){
     const bandLabel = score.band==="strong" ? "Strong" : score.band==="average" ? "Average" : "Needs Attention";
     const bandClass = score.band==="strong" ? "good" : score.band==="average" ? "warn" : "bad";
-    return `<div class="card">
-      <div class="st-sub" style="font-weight:700;color:var(--ink);font-size:13px;margin-bottom:10px;">Pocket Friendly Score</div>
+    const tooltip = `Savings: ${Math.round(score.savingsScore)}/100 · Spending: ${Math.round(score.spendingScore)}/100 · Investments: ${Math.round(score.investmentScore)}/100 · Insurance: ${Math.round(score.insuranceScore)}/100`;
+    return `<div class="card score-card-hover" title="${escapeHtml(tooltip)}">
+      <div class="st-sub" style="font-weight:700;color:var(--ink);font-size:13px;margin-bottom:10px;">Pocket Friendly Score <span style="font-weight:500;color:var(--ink-faint);cursor:help;" title="${escapeHtml(tooltip)}">ⓘ</span></div>
       <div style="display:flex;align-items:center;gap:14px;">
         <div class="donut-wrap" style="width:76px;height:76px;">
-          ${svgGauge(score.overall,76,8,score.color)}
+          ${svgGauge(score.overall,76,8,score.color,"scoreGaugeCircle")}
           <div class="donut-hole" style="inset:11px;">
             <div class="dh-value" style="font-size:18px;">${score.overall}</div>
           </div>
@@ -1315,11 +1391,15 @@ footer.disclaimer{border-top:1px solid var(--line);padding:16px 26px 26px;text-a
     const inc = totalIncome()||1;
     const prev = prevSnapshot();
     const prevInc = prev ? (prev.income||1) : null;
+    const invested = totalInvestedAmount();
+    const profit = totalCurrentValue()-invested;
     const savingsRatio = Math.round((netSavings()/inc)*100);
-    const investRatio = Math.round((totalCurrentValue()/inc)*100);
+    const investRatio = invested>0 ? Math.round((profit/invested)*100) : 0;
     const expenseRatio = Math.round((totalExpenses()/inc)*100);
+    const prevInvested = prev && prev.investedAmount!=null ? prev.investedAmount : null;
+    const prevProfit = prev && prevInvested!=null ? (prev.investments-prevInvested) : null;
     const prevSavingsRatio = prev ? Math.round(((prev.income-prev.expenses)/prevInc)*100) : null;
-    const prevInvestRatio = prev ? Math.round((prev.investments/prevInc)*100) : null;
+    const prevInvestRatio = (prevInvested && prevInvested>0) ? Math.round((prevProfit/prevInvested)*100) : null;
     const prevExpenseRatio = prev ? Math.round((prev.expenses/prevInc)*100) : null;
 
     function row(label, val, prevVal, goodWhenUp){
@@ -1506,6 +1586,19 @@ footer.disclaimer{border-top:1px solid var(--line);padding:16px 26px 26px;text-a
     if(days<=365*5) return "mid";
     return "long";
   }
+  // How much needs to be invested/saved each month to hit a goal by its target date.
+  // Simple linear projection (no assumed rate of return) — purely additive, doesn't touch existing goal logic.
+  function requiredMonthlyForGoal(g){
+    const remaining = Math.max(0, Number(g.target||0)-Number(g.current||0));
+    if(remaining<=0) return {status:"done"};
+    if(!g.deadline) return {status:"no-date"};
+    const d = new Date(g.deadline+"T00:00:00");
+    const now = new Date(); now.setHours(0,0,0,0);
+    let months = (d.getFullYear()-now.getFullYear())*12 + (d.getMonth()-now.getMonth());
+    if(d.getDate()<now.getDate()) months -= 1;
+    if(months<=0) return {status:"overdue", remaining};
+    return {status:"ok", amount: remaining/months, months};
+  }
   function renderGoalsOverview(){
     if(!data.goals.length) return `<div class="empty">No goals yet — add something you're saving toward in Savings &amp; Goals.</div>`;
     const buckets = {short:[], mid:[], long:[]};
@@ -1516,6 +1609,12 @@ footer.disclaimer{border-top:1px solid var(--line);padding:16px 26px 26px;text-a
         const g = buckets[key][0];
         if(!g) return `<div><div class="st-sub" style="margin-bottom:6px;">${labels[key]}</div><div class="empty" style="padding:14px 0;">No goal in this range</div></div>`;
         const pct = g.target>0 ? clamp((g.current/g.target)*100,0,100) : 0;
+        const req = requiredMonthlyForGoal(g);
+        let reqLine;
+        if(req.status==="done") reqLine = `<div class="st-sub" style="color:var(--green-dark);margin-top:4px;">🎉 Goal reached!</div>`;
+        else if(req.status==="overdue") reqLine = `<div class="st-sub" style="color:var(--coral);margin-top:4px;">Target date passed — ${fmt(req.remaining)} still needed</div>`;
+        else if(req.status==="no-date") reqLine = `<div class="st-sub" style="margin-top:4px;">Set a target date to see monthly investment needed</div>`;
+        else reqLine = `<div class="st-sub" style="margin-top:4px;">Invest <b style="color:var(--ink);">${fmt(req.amount)}</b>/mo for ${req.months} mo${req.months===1?'':'s'} to hit this goal</div>`;
         return `<div>
           <div class="st-sub" style="margin-bottom:6px;">${labels[key]}</div>
           <div style="font-weight:700;font-size:13.5px;">${escapeHtml(g.name)}</div>
@@ -1524,6 +1623,7 @@ footer.disclaimer{border-top:1px solid var(--line);padding:16px 26px 26px;text-a
             <div class="progress" style="flex:1;margin-top:0;"><div class="progress-fill" style="width:${pct}%;background:var(--green);"></div></div>
             <span class="num" style="font-size:11.5px;color:var(--ink-faint);">${Math.round(pct)}%</span>
           </div>
+          ${reqLine}
         </div>`;
       }).join("")}
     </div>
