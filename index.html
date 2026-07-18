@@ -970,6 +970,23 @@ footer.disclaimer{border-top:1px solid var(--line);padding:16px 26px 26px;text-a
   function totalInvestedAmount(){ return data.investments.reduce((s,i)=>s+Number(i.amount||0),0); }
   function totalCurrentValue(){ return data.investments.reduce((s,i)=>s+Number(i.currentValue||i.amount||0),0); }
   function totalDebt(){ return data.debts.reduce((s,d)=>s+Number(d.amount||0),0); }
+  // --- monthly-flow helpers (additive; used for ratios that should reflect "this month" rather than all-time totals) ---
+  function monthlyInvestedAmount(){
+    return data.investments.filter(i=>(i.date||"").slice(0,7)===curMonth()).reduce((s,i)=>s+Number(i.amount||0),0);
+  }
+  function monthlySavingsAdded(){
+    return data.savings.filter(s=>(s.date||"").slice(0,7)===curMonth()).reduce((s,x)=>s+Number(x.amount||0),0);
+  }
+  function monthlyPremiumAmount(amount, freq){
+    amount = Number(amount)||0;
+    if(freq==="yearly") return amount/12;
+    if(freq==="half-yearly") return amount/6;
+    if(freq==="quarterly") return amount/3;
+    return amount; // monthly
+  }
+  function totalMonthlyPremiums(){
+    return data.insurance.reduce((s,p)=>s+monthlyPremiumAmount(p.premium,p.frequency),0);
+  }
   function totalMonthlyEMI(){ return data.debts.reduce((s,d)=>s+Number(d.minPayment||0),0); }
   function netWorth(){ return totalSavingsBalance() + (data.emergencyFund.current||0) + totalCurrentValue() - totalDebt(); }
 
@@ -1177,7 +1194,7 @@ footer.disclaimer{border-top:1px solid var(--line);padding:16px 26px 26px;text-a
       </div>
 
       <div class="grid cols-2" style="margin-bottom:8px;">
-        ${financialDistributionCard()}
+        ${savingsDistributionCard()}
         ${insightsCard()}
       </div>
 
@@ -1207,28 +1224,34 @@ footer.disclaimer{border-top:1px solid var(--line);padding:16px 26px 26px;text-a
 
   // 📊 Financial Distribution — Savings / Investments / Insurance coverage, side by side.
   // Purely additive: reads existing data, degrades gracefully to 0 when a category is empty.
-  function financialDistributionCard(){
-    const savings = totalSavingsBalance();
-    const investments = totalCurrentValue();
-    const insuranceCoverage = (data.insurance||[]).reduce((s,p)=>s+Number(p.coverage||0),0);
+  // 📊 Savings Distribution — how this month's income is being managed: what went into
+  // investments, what went into savings, and what's left disposable after every committed
+  // outflow (expenses, savings, investments, debt EMIs, insurance premiums).
+  function savingsDistributionCard(){
+    const inc = totalIncome();
+    const invested = monthlyInvestedAmount();
+    const saved = monthlySavingsAdded();
+    const emi = totalMonthlyEMI();
+    const premiums = totalMonthlyPremiums();
+    const disposable = inc - totalExpenses() - saved - invested - emi - premiums;
     const parts = [
-      {label:"Savings", value:savings, color:"var(--green)"},
-      {label:"Investments", value:investments, color:"var(--purple)"},
-      {label:"Insurance Coverage", value:insuranceCoverage, color:"var(--coral)"},
+      {label:"Invested", value:invested, color:"var(--purple)"},
+      {label:"Saved", value:saved, color:"var(--green)"},
+      {label:"Disposable", value:disposable, color: disposable<0 ? "var(--coral)" : "var(--amber)"},
     ];
-    const total = parts.reduce((s,p)=>s+p.value,0) || 1;
+    const posTotal = parts.reduce((s,p)=>s+Math.max(0,p.value),0) || 1;
     return `<div class="card">
-      <div class="card-head"><h3>📊 Financial Distribution</h3></div>
+      <div class="card-head"><h3>📊 Savings Distribution</h3><span class="st-sub" style="font-weight:500;">This month</span></div>
       ${parts.map(p=>{
-        const pct = Math.round((p.value/total)*100);
+        const pct = Math.round((Math.max(0,p.value)/posTotal)*100);
         return `<div style="margin-bottom:11px;">
           <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--ink-soft);margin-bottom:4px;">
-            <span>${p.label}</span><b class="num" style="color:var(--ink);">${fmt(p.value)}</b>
+            <span>${p.label}</span><b class="num" style="color:${p.value<0?'var(--coral)':'var(--ink)'};">${p.value<0?'-':''}${fmt(Math.abs(p.value))}</b>
           </div>
           <div class="dist-bar-track"><div class="dist-bar-fill" style="width:${pct}%;background:${p.color};"></div></div>
         </div>`;
       }).join("")}
-      <div class="st-sub" style="margin-top:2px;">Share of your combined savings, investments &amp; insurance coverage</div>
+      <div class="st-sub" style="margin-top:2px;">${disposable<0 ? "You're overcommitted this month — outflows exceed income." : "Disposable = income − expenses − saved − invested − EMIs − premiums"}</div>
     </div>`;
   }
 
@@ -1391,15 +1414,15 @@ footer.disclaimer{border-top:1px solid var(--line);padding:16px 26px 26px;text-a
     const inc = totalIncome()||1;
     const prev = prevSnapshot();
     const prevInc = prev ? (prev.income||1) : null;
-    const invested = totalInvestedAmount();
-    const profit = totalCurrentValue()-invested;
-    const savingsRatio = Math.round((netSavings()/inc)*100);
-    const investRatio = invested>0 ? Math.round((profit/invested)*100) : 0;
+    const savingsRatio = Math.round((totalSavingsBalance()/inc)*100);
+    const investRatio = Math.round((monthlyInvestedAmount()/inc)*100);
     const expenseRatio = Math.round((totalExpenses()/inc)*100);
-    const prevInvested = prev && prev.investedAmount!=null ? prev.investedAmount : null;
-    const prevProfit = prev && prevInvested!=null ? (prev.investments-prevInvested) : null;
-    const prevSavingsRatio = prev ? Math.round(((prev.income-prev.expenses)/prevInc)*100) : null;
-    const prevInvestRatio = (prevInvested && prevInvested>0) ? Math.round((prevProfit/prevInvested)*100) : null;
+    // Savings Ratio here is "amount recorded in Savings tab ÷ income" — approximated month over month
+    // using the historical savings+emergency-fund snapshot (closest tracked figure).
+    const prevSavingsRatio = prev && prev.savingsBalanceTotal!=null ? Math.round((prev.savingsBalanceTotal/prevInc)*100) : null;
+    // Investment Ratio is based on THIS month's fresh contributions, which aren't tracked
+    // historically per month yet, so there's no reliable prior-month figure to compare against.
+    const prevInvestRatio = null;
     const prevExpenseRatio = prev ? Math.round((prev.expenses/prevInc)*100) : null;
 
     function row(label, val, prevVal, goodWhenUp){
@@ -1611,10 +1634,10 @@ footer.disclaimer{border-top:1px solid var(--line);padding:16px 26px 26px;text-a
         const pct = g.target>0 ? clamp((g.current/g.target)*100,0,100) : 0;
         const req = requiredMonthlyForGoal(g);
         let reqLine;
-        if(req.status==="done") reqLine = `<div class="st-sub" style="color:var(--green-dark);margin-top:4px;">🎉 Goal reached!</div>`;
-        else if(req.status==="overdue") reqLine = `<div class="st-sub" style="color:var(--coral);margin-top:4px;">Target date passed — ${fmt(req.remaining)} still needed</div>`;
-        else if(req.status==="no-date") reqLine = `<div class="st-sub" style="margin-top:4px;">Set a target date to see monthly investment needed</div>`;
-        else reqLine = `<div class="st-sub" style="margin-top:4px;">Invest <b style="color:var(--ink);">${fmt(req.amount)}</b>/mo for ${req.months} mo${req.months===1?'':'s'} to hit this goal</div>`;
+        if(req.status==="done") reqLine = `<div class="st-sub" style="font-size:11px;color:var(--green-dark);margin-top:4px;">🎉 Goal reached!</div>`;
+        else if(req.status==="overdue") reqLine = `<div class="st-sub" style="font-size:11px;color:var(--coral);margin-top:4px;">Target date passed — ${fmt(req.remaining)} still needed</div>`;
+        else if(req.status==="no-date") reqLine = `<div class="st-sub" style="font-size:11px;margin-top:4px;">Set a target date to see monthly investment needed</div>`;
+        else reqLine = `<div class="st-sub" style="font-size:11px;margin-top:4px;">Invest <b style="color:var(--ink);">${fmt(req.amount)}</b>/mo for ${req.months} mo${req.months===1?'':'s'} to hit this goal</div>`;
         return `<div>
           <div class="st-sub" style="margin-bottom:6px;">${labels[key]}</div>
           <div style="font-weight:700;font-size:13.5px;">${escapeHtml(g.name)}</div>
